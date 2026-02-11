@@ -159,13 +159,6 @@ unicode_ranges = [
 ]
 
 [merge]
-drop_tables = ["MATH", "meta", "vhea", "vmtx"]
-# Only keep essential layout features. Everything else (stylistic alternates,
-# CJK variant forms, vertical writing, width alternates) is dropped along with
-# ~2000 unreferenced alternate glyphs they pull in.
-keep_features = [
-    "ccmp",  # glyph composition/decomposition (correct accent rendering)
-    "locl",  # localized forms (e.g. Serbian vs Russian Cyrillic)
-    "liga",  # standard ligatures (fi, fl)
-    "calt",  # contextual alternates
-]
+drop_tables = ["MATH", "meta", "vhea", "vmtx", "GSUB", "GPOS", "GDEF"]
+# BMFont rasterization doesn't need OpenType layout features.
+keep_features = []

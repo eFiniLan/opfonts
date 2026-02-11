@@ -67,12 +67,12 @@ def subset_font(
         )
 
     options = Options()
-    options.layout_features = ["*"]  # keep all GSUB/GPOS features
+    options.layout_features = []  # drop all GSUB/GPOS features (output is for BMFont rasterization)
     options.name_IDs = ["*"]
     options.notdef_outline = True
     options.recalc_bounds = True
     options.recalc_timestamp = False
-    options.drop_tables = ["meta"]  # subsetter can't handle meta; merge drops the rest
+    options.drop_tables = ["meta", "GSUB", "GPOS", "GDEF"]
 
     subsetter = Subsetter(options=options)
     subsetter.populate(unicodes=codepoints)
