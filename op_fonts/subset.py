@@ -72,7 +72,7 @@ def subset_font(
     options.notdef_outline = True
     options.recalc_bounds = True
     options.recalc_timestamp = False
-    options.drop_tables = []  # don't drop anything yet — merge step handles this
+    options.drop_tables = ["meta"]  # subsetter can't handle meta; merge drops the rest
 
     subsetter = Subsetter(options=options)
     subsetter.populate(unicodes=codepoints)

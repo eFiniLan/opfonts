@@ -3,52 +3,20 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
 import shutil
 import tempfile
 from pathlib import Path
 
 from .charsets import load_charset_file
-from .config import BuildConfig, enable_scripts_for
-from .download import ensure_font, ensure_symbol_font, get_download_plan
+from .config import BuildConfig
+from .download import ensure_font, get_download_plan
 from .merge import merge_fonts
 from .naming import rename_font
 from .subset import parse_unicode_ranges, subset_font
-from .unicode_blocks import scripts_for_languages
 
 log = logging.getLogger(__name__)
 
-
-def _fetch_languages_json(url: str, cache_dir: Path) -> Path:
-    """Download languages.json from URL, caching locally."""
-    from .download import _download
-    cached = cache_dir / "languages.json"
-    if cached.exists():
-        log.debug("Using cached languages.json: %s", cached)
-        return cached
-    log.info("Fetching languages.json from %s", url)
-    _download(url, cached)
-    return cached
-
-
-def _apply_languages_json(config: BuildConfig, languages_json: Path) -> None:
-    """Read a languages.json file and enable only the needed scripts."""
-    with open(languages_json) as f:
-        data = json.load(f)
-
-    # openpilot's languages.json: {"Display Name": "lang_code", ...}
-    # Also accept a plain list of lang codes.
-    if isinstance(data, dict):
-        lang_codes = list(data.values())
-    elif isinstance(data, list):
-        lang_codes = data
-    else:
-        raise ValueError(f"Unexpected languages.json format: {type(data)}")
-
-    needed_scripts = scripts_for_languages(lang_codes)
-    log.info("Languages %s → scripts %s", lang_codes, sorted(needed_scripts))
-    enable_scripts_for(config, needed_scripts)
 
 
 def _resolve_codepoints(script, config: BuildConfig) -> list[int]:
@@ -76,31 +44,16 @@ def _resolve_codepoints(script, config: BuildConfig) -> list[int]:
     return parse_unicode_ranges(script.unicode_ranges)
 
 
-def dry_run(
-    config: BuildConfig,
-    languages_json: Path | None = None,
-) -> None:
+def dry_run(config: BuildConfig) -> None:
     """Print the build plan without executing anything."""
-    resolved = _resolve_languages_json(config, languages_json)
-    if resolved:
-        _apply_languages_json(config, resolved)
-
     enabled = [s for s in config.scripts if s.enabled]
-    print(f"Mode: {config.mode}")
     print(f"Output: {config.output}")
     print(f"Cache: {config.cache_dir}")
     print(f"\nEnabled scripts ({len(enabled)}):")
     for s in enabled:
         cps = _resolve_codepoints(s, config)
         charset_tag = f" [charset: {s.charset_file}]" if s.charset_file else ""
-        print(f"  {s.name}: {s.noto_font} → {len(cps)} codepoints{charset_tag}")
-
-    if config.symbols.enabled:
-        print(f"\nSymbols:")
-        for sf in config.symbols.fonts:
-            print(f"  {sf.name}")
-        sym_cps = parse_unicode_ranges(config.symbols.unicode_ranges)
-        print(f"  {len(sym_cps)} codepoints from ranges")
+        print(f"  {s.name}: {s.font} → {len(cps)} codepoints{charset_tag}")
 
     print(f"\nDownload plan:")
     for name, url, cached in get_download_plan(config):
@@ -110,44 +63,29 @@ def dry_run(
 
     print(f"\nMerge order (first = baseline metrics):")
     for i, s in enumerate(enabled):
-        print(f"  {i + 1}. {s.noto_font} ({s.name})")
-    if config.symbols.enabled:
-        for sf in config.symbols.fonts:
-            print(f"  {len(enabled) + 1}. {sf.name} (symbols)")
-
+        print(f"  {i + 1}. {s.font} ({s.name})")
     print(f"\nDrop tables: {config.merge.drop_tables}")
     print(f"Final name: {config.name} {config.style}")
 
 
-def build(
-    config: BuildConfig,
-    languages_json: Path | None = None,
-) -> Path:
+def build(config: BuildConfig) -> Path:
     """Execute the full build pipeline. Returns the path to the output font."""
-    if languages_json:
-        _apply_languages_json(config, languages_json)
-
     enabled = [s for s in config.scripts if s.enabled]
     if not enabled:
         raise RuntimeError("No scripts enabled — nothing to build")
 
-    log.info("Building %s (%s mode, %d scripts)", config.output, config.mode, len(enabled))
+    log.info("Building %s (%d scripts)", config.output, len(enabled))
 
     # 1. Download
     log.info("Step 1/5: Downloading fonts...")
     font_paths: dict[str, Path] = {}
     for script in enabled:
-        font_paths[script.name] = ensure_font(config, script)
-
-    symbol_paths: list[Path] = []
-    if config.symbols.enabled:
-        for sf in config.symbols.fonts:
-            symbol_paths.append(ensure_symbol_font(config, sf.name, sf.path, sf.url))
+        font_paths[script.name] = ensure_font(config.cache_dir, script.font, script.url)
 
     # 2. Subset (dedup: later scripts only get codepoints not already covered)
     log.info("Step 2/5: Subsetting fonts...")
     work_dir = Path(tempfile.mkdtemp(prefix="op_fonts_"))
-    subset_paths: list[Path] = []
+    subset_entries: list[tuple[Path, bool]] = []  # (path, should_scale)
     covered_cps: set[int] = set()
 
     for script in enabled:
@@ -166,23 +104,26 @@ def build(
             font = TTFont(out)
             covered_cps.update(font.getBestCmap().keys())
             font.close()
-            subset_paths.append(out)
+            subset_entries.append((out, script.scale))
         except ValueError as exc:
             log.warning("Skipping %s: %s", script.name, exc)
 
-    # Symbols
-    if config.symbols.enabled and config.symbols.unicode_ranges:
-        sym_cps = set(parse_unicode_ranges(config.symbols.unicode_ranges))
-        for sp in symbol_paths:
-            out = work_dir / f"subset_symbols_{sp.stem}.otf"
-            try:
-                subset_font(sp, codepoints=sorted(sym_cps), output_path=out)
-                subset_paths.append(out)
-            except ValueError as exc:
-                log.warning("Skipping symbols %s: %s", sp.name, exc)
-
-    if not subset_paths:
+    if not subset_entries:
         raise RuntimeError("All subsets were empty — nothing to merge")
+
+    # Scale each subset to match target cap-height ratio.
+    # If not set, auto-detect from first script (base font).
+    subset_paths = [p for p, _ in subset_entries]
+    target_ratio = config.metrics.target_cap_ratio
+    if target_ratio <= 0:
+        target_ratio = _get_cap_ratio(subset_paths[0])
+    if target_ratio > 0:
+        log.info("Target cap ratio: %.3f", target_ratio)
+        for sp, should_scale in subset_entries:
+            if should_scale:
+                _scale_to_target(sp, target_ratio)
+            else:
+                log.info("Skipping scale for %s (scale = false)", sp.name)
 
     # 3. Merge
     log.info("Step 3/5: Merging %d subset fonts...", len(subset_paths))
@@ -197,8 +138,8 @@ def build(
 
     # 5. Rename, fix metrics & subroutinize
     log.info("Step 5/5: Setting font metadata...")
-    rename_font(output_path, config.name, config.style)
-    _fix_metrics(output_path)
+    rename_font(output_path, config.name, config.style, copyright=config.copyright, designer=config.designer)
+    _fix_metrics(output_path, config.metrics)
     _subroutinize(output_path)
 
     # Clean up temp dir
@@ -235,7 +176,7 @@ def _prune_features(font_path: Path, keep_features: list[str]) -> None:
     opts.notdef_outline = True
     opts.name_legacy = True
     opts.glyph_names = False
-    opts.drop_tables += ["DSIG"]
+    opts.drop_tables += ["DSIG", "meta"]
 
     subsetter = Subsetter(options=opts)
     subsetter.populate(unicodes=list(cmap.keys()))
@@ -252,28 +193,41 @@ def _prune_features(font_path: Path, keep_features: list[str]) -> None:
     )
 
 
-def _fix_metrics(font_path: Path) -> None:
-    """Adjust metrics and scale glyphs to match Inter's proportions.
+def _get_cap_ratio(font_path: Path) -> float:
+    """Read a font's cap-height / UPM ratio."""
+    from fontTools.ttLib import TTFont
+    font = TTFont(font_path)
+    upm = font["head"].unitsPerEm
+    cap = font["OS/2"].sCapHeight if font["OS/2"].sCapHeight else 0
+    font.close()
+    return cap / upm if upm and cap > 0 else 0.0
 
-    Inter (UPM 2816): capHeight=2048, ratio=0.727
-    IBM Plex (UPM 1000): capHeight=698, ratio=0.698
-    Scale factor: 0.727/0.698 = 1.042 (~4% larger)
+
+def _scale_to_target(font_path: Path, target_cap_ratio: float) -> None:
+    """Scale all glyphs in a font so its cap-height ratio matches the target.
+
+    Each source font may have a different cap-height ratio, so this must run
+    per-subset *before* merging to get uniform visual size across mixed sources.
     """
     from fontTools.ttLib import TTFont
-    from fontTools.pens.t2CharStringPen import T2CharStringPen
 
     font = TTFont(font_path)
-    upm = font["head"].unitsPerEm  # 1000
+    upm = font["head"].unitsPerEm
+    source_cap = font["OS/2"].sCapHeight if font["OS/2"].sCapHeight else 0
+    if source_cap <= 0:
+        font.close()
+        return
 
-    # Scale glyphs to match Inter's cap-height ratio
-    # Inter: capHeight/UPM = 2048/2816 = 0.7273
-    # Plex:  capHeight/UPM = 698/1000  = 0.698
-    inter_cap_ratio = 2048 / 2816
-    plex_cap_ratio = font["OS/2"].sCapHeight / upm if font["OS/2"].sCapHeight else 0.698
-    scale = inter_cap_ratio / plex_cap_ratio
-    log.info("Scaling glyphs by %.3f to match Inter cap-height ratio", scale)
+    source_ratio = source_cap / upm
+    scale = target_cap_ratio / source_ratio
+    if abs(scale - 1.0) < 0.001:
+        font.close()
+        return
+
+    log.info("Scaling %s by %.3f (cap ratio %.3f → %.3f)", font_path.name, scale, source_ratio, target_cap_ratio)
 
     if "CFF " in font:
+        from fontTools.pens.t2CharStringPen import T2CharStringPen
         from fontTools.pens.transformPen import TransformPen
 
         cff = font["CFF "]
@@ -293,14 +247,29 @@ def _fix_metrics(font_path: Path) -> None:
             new_cs.globalSubrs = old_cs.globalSubrs
             cs[gname] = new_cs
 
-        # Scale horizontal metrics
         for gname in hmtx.metrics:
             width, lsb = hmtx.metrics[gname]
             hmtx.metrics[gname] = (round(width * scale), round(lsb * scale))
 
-    # Inter's metrics (scaled to UPM 1000): ascender=969, descender=-242
-    ascender = 969
-    descender = -242
+    os2 = font["OS/2"]
+    os2.sxHeight = round(os2.sxHeight * scale) if os2.sxHeight else 0
+    os2.sCapHeight = round(os2.sCapHeight * scale) if os2.sCapHeight else 0
+
+    font.save(str(font_path))
+    font.close()
+
+
+def _fix_metrics(font_path: Path, metrics) -> None:
+    """Set vertical metrics on the merged font. Skips if ascender/descender are 0."""
+    if metrics.ascender == 0 and metrics.descender == 0:
+        return
+
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(font_path)
+
+    ascender = metrics.ascender
+    descender = metrics.descender
 
     os2 = font["OS/2"]
     os2.sTypoAscender = ascender
@@ -308,8 +277,6 @@ def _fix_metrics(font_path: Path) -> None:
     os2.sTypoLineGap = 0
     os2.usWinAscent = ascender
     os2.usWinDescent = abs(descender)
-    os2.sxHeight = round(os2.sxHeight * scale) if os2.sxHeight else 0
-    os2.sCapHeight = round(os2.sCapHeight * scale) if os2.sCapHeight else 0
 
     hhea = font["hhea"]
     hhea.ascent = ascender
@@ -318,7 +285,7 @@ def _fix_metrics(font_path: Path) -> None:
 
     font.save(str(font_path))
     font.close()
-    log.info("Fixed metrics: ascender=%d, descender=%d, scale=%.3f", ascender, descender, scale)
+    log.info("Fixed metrics: ascender=%d, descender=%d", ascender, descender)
 
 
 
@@ -351,28 +318,10 @@ def _count_glyphs(font_path: Path) -> int:
     return count
 
 
-def _resolve_languages_json(config: BuildConfig, languages_json: Path | None) -> Path | None:
-    """Resolve languages.json: use local path, or auto-fetch from config URL."""
-    if languages_json:
-        return languages_json
-    if config.languages_url:
-        return _fetch_languages_json(config.languages_url, config.cache_dir)
-    return None
-
-
-def build_all(
-    config: BuildConfig,
-    languages_json: Path | None = None,
-) -> list[Path]:
+def build_all(config: BuildConfig) -> list[Path]:
     """Build all weight variants defined in config."""
-    resolved = _resolve_languages_json(config, languages_json)
-
     if not config.weights:
-        return [build(config, languages_json=resolved)]
-
-    # Apply language filter once before iterating weights
-    if resolved:
-        _apply_languages_json(config, resolved)
+        return [build(config)]
 
     outputs = []
     for weight in config.weights:
@@ -380,8 +329,11 @@ def build_all(
         cfg = copy.deepcopy(config)
         cfg.style = weight
         cfg.output = f"{config.name}-{weight}.otf"
-        # Replace "Regular" in static font names for this weight
+        # Replace "Regular" in font names/URLs for this weight.
+        # Scripts with explicit weights only swap if the weight is available.
         for script in cfg.scripts:
-            script.noto_font = script.noto_font.replace("Regular", weight)
+            if not script.weights or weight in script.weights:
+                script.font = script.font.replace("Regular", weight)
+                script.url = script.url.replace("Regular", weight)
         outputs.append(build(cfg))
     return outputs

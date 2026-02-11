@@ -29,25 +29,8 @@ def _list_scripts(config_path: Path) -> None:
     print(f"Available scripts ({len(config.scripts)}):")
     for s in config.scripts:
         status = "enabled" if s.enabled else "disabled"
-        cjk_tag = " [CJK]" if s.is_cjk else ""
         charset_tag = f" charset={s.charset_file}" if s.charset_file else ""
-        print(f"  {s.name:<12} {status:<10} {s.noto_font}{cjk_tag}{charset_tag}")
-    if config.symbols.enabled:
-        print(f"\nSymbols: enabled ({len(config.symbols.fonts)} fonts)")
-    else:
-        print(f"\nSymbols: disabled")
-    print(f"Emoji: {'enabled' if config.emoji.enabled else 'disabled'}")
-
-
-def _generate_charsets(config_path: Path) -> None:
-    from .charsets import generate_charsets
-    config = load_config(config_path)
-    charsets_dir = config.cache_dir.parent / "charsets"
-    results = generate_charsets(charsets_dir, config.cache_dir)
-    print(f"Generated {len(results)} charset files in {charsets_dir}/:")
-    for name, path in results.items():
-        count = sum(1 for line in path.read_text().splitlines() if line.strip() and not line.startswith("#"))
-        print(f"  {name}: {count} codepoints → {path}")
+        print(f"  {s.name:<12} {status:<10} {s.font}{charset_tag}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -62,24 +45,6 @@ def main(argv: list[str] | None = None) -> None:
         help="Path to op_fonts.toml (default: auto-detect)",
     )
     parser.add_argument(
-        "--languages-json",
-        type=Path,
-        default=None,
-        help="Path to openpilot languages.json — auto-enables needed scripts",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["replace_gonoto", "unified"],
-        default=None,
-        help="Build mode (overrides config)",
-    )
-    parser.add_argument(
-        "--output", "-o",
-        type=str,
-        default=None,
-        help="Output filename (overrides config)",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show build plan without executing",
@@ -88,11 +53,6 @@ def main(argv: list[str] | None = None) -> None:
         "--list-scripts",
         action="store_true",
         help="List available scripts and exit",
-    )
-    parser.add_argument(
-        "--generate-charsets",
-        action="store_true",
-        help="Download Unihan database and generate CJK common charset files",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -120,27 +80,16 @@ def main(argv: list[str] | None = None) -> None:
         _list_scripts(config_path)
         return
 
-    if args.generate_charsets:
-        _generate_charsets(config_path)
-        return
-
-    overrides: dict = {}
-    if args.mode:
-        overrides["mode"] = args.mode
-    if args.output:
-        overrides["output"] = args.output
-
-    config = load_config(config_path, overrides=overrides)
+    config = load_config(config_path)
 
     if args.dry_run:
-        dry_run(config, languages_json=args.languages_json)
+        dry_run(config)
         return
 
-    # languages_json arg overrides; otherwise build_all auto-fetches from config URL
     if config.weights:
-        outputs = build_all(config, languages_json=args.languages_json)
+        outputs = build_all(config)
         for output in outputs:
             print(f"Built: {output} ({output.stat().st_size / 1024:.1f} KB)")
     else:
-        output = build(config, languages_json=args.languages_json)
+        output = build(config)
         print(f"Built: {output} ({output.stat().st_size / 1024:.1f} KB)")
