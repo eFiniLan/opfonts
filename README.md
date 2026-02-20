@@ -1,5 +1,7 @@
 # opfonts
 
+[繁體中文](README_zh-TW.md)
+
 Minimal font builder for multi-language projects. Designed for [openpilot](https://github.com/commaai/openpilot), but works for any project that needs compact multi-language fonts with minimal CJK character sets. Produces optimized OTF fonts by merging multiple source fonts (e.g. [IBM Plex Sans](https://github.com/IBM/plex), [Noto](https://github.com/notofonts/notofonts.github.io)), subsetting CJK to government-standard character lists, and deduplicating shared ideographs across languages.
 
 **Output:** ~1.9 MB per weight (vs 20+ MB with full CJK fonts)
