@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .config import load_config
+from .extract import extract_from_pot
 from .pipeline import build, build_all, dry_run
 
 
@@ -60,6 +61,12 @@ def main(argv: list[str] | None = None) -> None:
         default=1,
         help="Increase verbosity (-v for INFO, -vv for DEBUG)",
     )
+    parser.add_argument(
+        "--extract-pot",
+        type=str,
+        metavar="SOURCE",
+        help="Extract non-ASCII codepoints from a .pot file (path or URL) and print them",
+    )
 
     args = parser.parse_args(argv)
 
@@ -75,6 +82,13 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     config_path = args.config or _find_config()
+
+    if args.extract_pot:
+        codepoints = extract_from_pot(args.extract_pot)
+        print(f"Non-ASCII codepoints ({len(codepoints)}):")
+        for cp in sorted(codepoints):
+            print(f"  U+{cp:04X}  {chr(cp)}")
+        return
 
     if args.list_scripts:
         _list_scripts(config_path)

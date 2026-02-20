@@ -85,65 +85,65 @@ def build(config: BuildConfig) -> Path:
     # 2. Subset (dedup: later scripts only get codepoints not already covered)
     log.info("Step 2/5: Subsetting fonts...")
     work_dir = Path(tempfile.mkdtemp(prefix="op_fonts_"))
-    subset_entries: list[tuple[Path, bool]] = []  # (path, should_scale)
-    covered_cps: set[int] = set()
+    try:
+        subset_entries: list[tuple[Path, bool]] = []  # (path, should_scale)
+        covered_cps: set[int] = set()
 
-    for script in enabled:
-        src = font_paths[script.name]
-        out = work_dir / f"subset_{script.name}.otf"
-        codepoints = _resolve_codepoints(script, config)
-        if covered_cps:
-            codepoints = [cp for cp in codepoints if cp not in covered_cps]
-        if not codepoints:
-            log.info("Skipping %s: all codepoints already covered", script.name)
-            continue
-        try:
-            subset_font(src, codepoints=codepoints, output_path=out)
-            # Track actual cmap (font may not have all requested codepoints)
-            from fontTools.ttLib import TTFont
-            font = TTFont(out)
-            covered_cps.update(font.getBestCmap().keys())
-            font.close()
-            subset_entries.append((out, script.scale))
-        except ValueError as exc:
-            log.warning("Skipping %s: %s", script.name, exc)
+        for script in enabled:
+            src = font_paths[script.name]
+            out = work_dir / f"subset_{script.name}.otf"
+            codepoints = _resolve_codepoints(script, config)
+            if covered_cps:
+                codepoints = [cp for cp in codepoints if cp not in covered_cps]
+            if not codepoints:
+                log.info("Skipping %s: all codepoints already covered", script.name)
+                continue
+            try:
+                subset_font(src, codepoints=codepoints, output_path=out)
+                # Track actual cmap (font may not have all requested codepoints)
+                from fontTools.ttLib import TTFont
+                font = TTFont(out)
+                covered_cps.update(font.getBestCmap().keys())
+                font.close()
+                subset_entries.append((out, script.scale))
+            except ValueError as exc:
+                log.warning("Skipping %s: %s", script.name, exc)
 
-    if not subset_entries:
-        raise RuntimeError("All subsets were empty — nothing to merge")
+        if not subset_entries:
+            raise RuntimeError("All subsets were empty — nothing to merge")
 
-    # Scale each subset to match target cap-height ratio.
-    # If not set, auto-detect from first script (base font).
-    subset_paths = [p for p, _ in subset_entries]
-    target_ratio = config.metrics.target_cap_ratio
-    if target_ratio <= 0:
-        target_ratio = _get_cap_ratio(subset_paths[0])
-    if target_ratio > 0:
-        log.info("Target cap ratio: %.3f", target_ratio)
-        for sp, should_scale in subset_entries:
-            if should_scale:
-                _scale_to_target(sp, target_ratio)
-            else:
-                log.info("Skipping scale for %s (scale = false)", sp.name)
+        # Scale each subset to match target cap-height ratio.
+        # If not set, auto-detect from first script (base font).
+        subset_paths = [p for p, _ in subset_entries]
+        target_ratio = config.metrics.target_cap_ratio
+        if target_ratio <= 0:
+            target_ratio = _get_cap_ratio(subset_paths[0])
+        if target_ratio > 0:
+            log.info("Target cap ratio: %.3f", target_ratio)
+            for sp, should_scale in subset_entries:
+                if should_scale:
+                    _scale_to_target(sp, target_ratio)
+                else:
+                    log.info("Skipping scale for %s (scale = false)", sp.name)
 
-    # 3. Merge
-    log.info("Step 3/5: Merging %d subset fonts...", len(subset_paths))
-    out_dir = Path(config.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    output_path = out_dir / config.output
-    merge_fonts(subset_paths, output_path, drop_tables=config.merge.drop_tables)
+        # 3. Merge
+        log.info("Step 3/5: Merging %d subset fonts...", len(subset_paths))
+        out_dir = Path(config.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / config.output
+        merge_fonts(subset_paths, output_path, drop_tables=config.merge.drop_tables)
 
-    # 4. Prune unused GSUB/GPOS features and unreferenced glyphs
-    if config.merge.keep_features:
-        _prune_features(output_path, config.merge.keep_features)
+        # 4. Prune unused GSUB/GPOS features and unreferenced glyphs
+        if config.merge.keep_features:
+            _prune_features(output_path, config.merge.keep_features)
 
-    # 5. Rename, fix metrics & subroutinize
-    log.info("Step 5/5: Setting font metadata...")
-    rename_font(output_path, config.name, config.style, copyright=config.copyright, designer=config.designer)
-    _fix_metrics(output_path, config.metrics)
-    _subroutinize(output_path)
-
-    # Clean up temp dir
-    shutil.rmtree(work_dir, ignore_errors=True)
+        # 5. Rename, fix metrics & subroutinize
+        log.info("Step 5/5: Setting font metadata...")
+        rename_font(output_path, config.name, config.style, copyright=config.copyright, designer=config.designer)
+        _fix_metrics(output_path, config.metrics)
+        _subroutinize(output_path)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
     final_size = output_path.stat().st_size
     log.info(
@@ -186,7 +186,6 @@ def _prune_features(font_path: Path, keep_features: list[str]) -> None:
     font.save(str(font_path))
     font.close()
 
-    before_size = font_path.stat().st_size  # saved size
     log.info(
         "Step 4/5: Pruned features → kept %s, glyphs %d → %d (removed %d)",
         keep_features, before_glyphs, after_glyphs, before_glyphs - after_glyphs,
@@ -299,15 +298,17 @@ def _subroutinize(font_path: Path) -> None:
         return
     try:
         import cffsubr
-        before = font_path.stat().st_size
-        cffsubr.subroutinize(font)
-        font.save(str(font_path))
-        after = font_path.stat().st_size
-        log.info("Subroutinized: %.1f KB → %.1f KB (%.0f%% smaller)",
-                 before / 1024, after / 1024, (before - after) / before * 100)
     except ImportError:
         log.debug("cffsubr not installed, skipping subroutinization")
+        font.close()
+        return
+    before = font_path.stat().st_size
+    cffsubr.subroutinize(font)
+    font.save(str(font_path))
     font.close()
+    after = font_path.stat().st_size
+    log.info("Subroutinized: %.1f KB → %.1f KB (%.0f%% smaller)",
+             before / 1024, after / 1024, (before - after) / before * 100)
 
 
 def _count_glyphs(font_path: Path) -> int:
@@ -329,11 +330,15 @@ def build_all(config: BuildConfig) -> list[Path]:
         cfg = copy.deepcopy(config)
         cfg.style = weight
         cfg.output = f"{config.name}-{weight}.otf"
-        # Replace "Regular" in font names/URLs for this weight.
+        # Replace weight stem in font filenames/URLs for this weight.
         # Scripts with explicit weights only swap if the weight is available.
         for script in cfg.scripts:
             if not script.weights or weight in script.weights:
-                script.font = script.font.replace("Regular", weight)
-                script.url = script.url.replace("Regular", weight)
+                stem = Path(script.font).stem       # e.g. "IBMPlexSansSC-Regular"
+                ext = Path(script.font).suffix       # e.g. ".otf"
+                base = stem.rsplit("-", 1)[0]         # e.g. "IBMPlexSansSC"
+                new_font = f"{base}-{weight}{ext}"
+                script.url = script.url.replace(script.font, new_font)
+                script.font = new_font
         outputs.append(build(cfg))
     return outputs

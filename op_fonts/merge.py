@@ -307,8 +307,9 @@ def merge_fonts(
     fmt_name = "CFF" if use_cff else "TTF"
     log.info("Outline format: %s (%d/%d CFF inputs)", fmt_name, cff_count, len(font_paths))
 
-    target_upm = TTFont(font_paths[0])["head"].unitsPerEm
-    TTFont(font_paths[0]).close()
+    f = TTFont(font_paths[0])
+    target_upm = f["head"].unitsPerEm
+    f.close()
 
     processed: list[Path] = []
     for p in font_paths:
