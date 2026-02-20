@@ -64,6 +64,7 @@ Options:
   -v, --verbose               Increase verbosity (default: INFO, -vv for DEBUG)
   --dry-run                   Show build plan, don't execute
   --list-scripts              List configured scripts and exit
+
 ```
 
 ## Build pipeline
