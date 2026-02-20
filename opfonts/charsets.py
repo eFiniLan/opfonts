@@ -96,7 +96,7 @@ def _download_unihan(cache_dir: Path) -> str:
 
     if not zip_path.exists():
         log.info("Downloading Unihan database from %s", UNIHAN_URL)
-        req = Request(UNIHAN_URL, headers={"User-Agent": "op_fonts/0.1"})
+        req = Request(UNIHAN_URL, headers={"User-Agent": "opfonts/0.1"})
         with urlopen(req, timeout=120) as resp:
             zip_path.write_bytes(resp.read())
         log.info("Saved %s (%.1f KB)", zip_path, zip_path.stat().st_size / 1024)

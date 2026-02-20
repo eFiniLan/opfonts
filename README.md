@@ -1,20 +1,20 @@
-# op_fonts
+# opfonts
 
-Font builder for [openpilot](https://github.com/commaai/openpilot). Produces optimized multi-language OTF fonts by merging [IBM Plex Sans](https://github.com/IBM/plex) with [Noto Symbols](https://github.com/notofonts/notofonts.github.io), subsetting to only the glyphs needed for openpilot's UI.
+Minimal font builder for multi-language projects. Designed for [openpilot](https://github.com/commaai/openpilot), but works for any project that needs compact multi-language fonts with minimal CJK character sets. Produces optimized OTF fonts by merging multiple source fonts (e.g. [IBM Plex Sans](https://github.com/IBM/plex), [Noto](https://github.com/notofonts/notofonts.github.io)), subsetting CJK to government-standard character lists, and deduplicating shared ideographs across languages.
 
-**Output:** ~1.9 MB per weight (Regular, Medium, SemiBold, Bold)
+**Output:** ~1.9 MB per weight (vs 20+ MB with full CJK fonts)
 
 ## Why
 
-openpilot's UI supports 5+ languages including CJK, Thai, and Cyrillic. A naive approach — bundling full CJK fonts — would be 20+ MB per weight. Most of those glyphs are never used on the UI.
+Full CJK fonts contain 30,000+ glyphs each. Most projects only need the characters that actually appear in their UI — typically the most common characters defined by government standards. Bundling full fonts wastes 10-20 MB per weight.
 
-This tool solves three problems:
+opfonts solves three problems:
 
-1. **Size**: Full IBM Plex Sans CJK fonts contain 30,000+ glyphs each. openpilot's UI only needs the characters that actually appear in translations. We subset to official government standard character lists (3,500 SC + 4,808 TC + 2,136 JA + 2,350 KO Hangul), which cover all characters used in openpilot's `.po` translation files with room to spare. CJK scripts are deduplicated across languages — SC goes first, TC only adds traditional-only characters, JA only adds remaining kanji — so shared ideographs aren't stored twice.
+1. **Size**: Subsets CJK fonts to official government standard character lists (3,500 SC + 4,808 TC + 2,136 JA + 2,350 KO Hangul). CJK scripts are deduplicated across languages — SC goes first, TC only adds traditional-only characters, JA only adds remaining kanji — so shared ideographs aren't stored twice.
 
-2. **Unused features**: CJK fonts ship with thousands of alternate glyphs for stylistic sets, vertical writing, width variants, and legacy encoding forms (jp78, jp83, jp90, etc.). None of these are needed for openpilot's UI, which rasterizes fonts into BMFont atlases at build time. The pipeline drops all OpenType layout tables (GSUB/GPOS/GDEF) and their associated alternate glyphs entirely.
+2. **Unused features**: CJK fonts ship with thousands of alternate glyphs for stylistic sets, vertical writing, width variants, and legacy encoding forms (jp78, jp83, jp90, etc.). The pipeline can drop OpenType layout tables (GSUB/GPOS/GDEF) and their associated alternate glyphs entirely — useful for bitmap/atlas renderers that don't need them.
 
-3. **Metric consistency**: openpilot's primary font is Inter. IBM Plex Sans has a slightly smaller cap-height ratio (0.698 vs Inter's 0.727), so text rendered in OpFont would appear ~4% shorter than Inter at the same font size. The pipeline scales all glyphs by 1.042x and sets ascender/descender to match Inter's proportions, so switching between Latin and CJK text doesn't cause visible size jumps.
+3. **Metric consistency**: Different source fonts have different cap-height ratios. The pipeline can scale all glyphs and set ascender/descender to match a target font's proportions, so switching between Latin and CJK text doesn't cause visible size jumps.
 
 ## Language coverage
 
@@ -41,23 +41,23 @@ CJK scripts are merged with pipeline deduplication: SC first, TC fills tradition
 
 ```bash
 # install
-cd op_fonts
+cd opfonts
 uv sync  # or: pip install -e .
 
 # build all weights (Regular, Medium, SemiBold, Bold)
-op-fonts
+opfonts
 
 # dry run — show build plan without downloading or building
-op-fonts --dry-run
+opfonts --dry-run
 
 # extra verbose output
-op-fonts -vv    # DEBUG
+opfonts -vv    # DEBUG
 ```
 
 ### CLI options
 
 ```
-op-fonts [options]
+opfonts [options]
 
 Options:
   -c, --config PATH           Path to config TOML (auto-detects if omitted)
@@ -79,7 +79,7 @@ Options:
 
 ## Configuration
 
-Build is driven by `op_fonts.toml`. Key sections:
+Build is driven by `opfonts.toml`. Key sections:
 
 ```toml
 [font]
@@ -153,7 +153,7 @@ Nothing to do — the script is already in the TOML and will be included in the 
 
 1. Find the font source. IBM Plex Sans covers [many scripts](https://github.com/IBM/plex). If not available, use [Noto Sans](https://github.com/notofonts/notofonts.github.io).
 
-2. Add a `[[scripts]]` entry in `op_fonts.toml`:
+2. Add a `[[scripts]]` entry in `opfonts.toml`:
 
 ```toml
 [[scripts]]
@@ -168,7 +168,7 @@ unicode_ranges = [
 ]
 ```
 
-3. Rebuild with `op-fonts -v`.
+3. Rebuild with `opfonts -v`.
 
 ## Output
 

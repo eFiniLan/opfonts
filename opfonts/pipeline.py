@@ -84,7 +84,7 @@ def build(config: BuildConfig) -> Path:
 
     # 2. Subset (dedup: later scripts only get codepoints not already covered)
     log.info("Step 2/5: Subsetting fonts...")
-    work_dir = Path(tempfile.mkdtemp(prefix="op_fonts_"))
+    work_dir = Path(tempfile.mkdtemp(prefix="opfonts_"))
     try:
         subset_entries: list[tuple[Path, bool]] = []  # (path, should_scale)
         covered_cps: set[int] = set()

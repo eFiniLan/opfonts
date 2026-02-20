@@ -1,4 +1,4 @@
-"""CLI entry point for op_fonts."""
+"""CLI entry point for opfonts."""
 
 from __future__ import annotations
 
@@ -12,15 +12,15 @@ from .pipeline import build, build_all, dry_run
 
 
 def _find_config() -> Path:
-    """Look for op_fonts.toml in common locations."""
+    """Look for opfonts.toml in common locations."""
     candidates = [
-        Path("op_fonts.toml"),
-        Path(__file__).resolve().parent.parent / "op_fonts.toml",
+        Path("opfonts.toml"),
+        Path(__file__).resolve().parent.parent / "opfonts.toml",
     ]
     for p in candidates:
         if p.exists():
             return p
-    print("Error: op_fonts.toml not found", file=sys.stderr)
+    print("Error: opfonts.toml not found", file=sys.stderr)
     sys.exit(1)
 
 
@@ -35,14 +35,14 @@ def _list_scripts(config_path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="op_fonts",
-        description="Minimal font builder for openpilot",
+        prog="opfonts",
+        description="Minimal multi-language font builder with CJK subsetting",
     )
     parser.add_argument(
         "--config", "-c",
         type=Path,
         default=None,
-        help="Path to op_fonts.toml (default: auto-detect)",
+        help="Path to opfonts.toml (default: auto-detect)",
     )
     parser.add_argument(
         "--dry-run",

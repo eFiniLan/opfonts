@@ -13,7 +13,7 @@ from .config import BuildConfig
 
 log = logging.getLogger(__name__)
 
-_USER_AGENT = "op_fonts/0.1"
+_USER_AGENT = "opfonts/0.1"
 _MAX_RETRIES = 3
 _RETRY_DELAY = 2.0  # seconds
 

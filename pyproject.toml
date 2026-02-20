@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "op_fonts"
+name = "opfonts"
 version = "0.1.0"
-description = "Minimal font builder for openpilot"
+description = "Minimal multi-language font builder with CJK subsetting"
 requires-python = ">=3.11"
 dependencies = [
     "cffsubr>=0.4.0",
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["op_fonts*"]
+include = ["opfonts*"]
 
 [project.scripts]
-op-fonts = "op_fonts.cli:main"
+opfonts = "opfonts.cli:main"
